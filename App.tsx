@@ -53,6 +53,48 @@ const getInitialState = (): AppState => ({
 });
 
 const App: React.FC = () => {
+  // API Key Management State
+  const [hasApiKey, setHasApiKey] = useState<boolean>(false);
+  const [isCheckingKey, setIsCheckingKey] = useState<boolean>(true);
+
+  // Check for API Key on mount
+  useEffect(() => {
+    const checkApiKey = async () => {
+      try {
+        if (window.aistudio) {
+          const hasKey = await window.aistudio.hasSelectedApiKey();
+          setHasApiKey(hasKey);
+        } else {
+          // Development fallback or if running outside of the specific environment
+          // For now, we assume it's false if the object doesn't exist, or handle gracefully
+          setHasApiKey(true); // Allow access if aistudio object is missing (e.g. local dev)
+        }
+      } catch (error) {
+        console.error("Error checking API key:", error);
+        setHasApiKey(false);
+      } finally {
+        setIsCheckingKey(false);
+      }
+    };
+    checkApiKey();
+  }, []);
+
+  const handleApiKeySelect = async () => {
+    try {
+      if (window.aistudio) {
+        await window.aistudio.openSelectKey();
+        // Assume success and proceed to mitigate race condition
+        setHasApiKey(true);
+      }
+    } catch (error: any) {
+      console.error("Error selecting API key:", error);
+      if (error.message && error.message.includes("Requested entity was not found")) {
+        setHasApiKey(false);
+        alert("API 키를 찾을 수 없습니다. 다시 선택해주세요.");
+      }
+    }
+  };
+
   const [appState, setAppState] = useState<AppState>(() => {
     const savedState = localStorage.getItem(APP_STATE_KEY);
     if (!savedState) {
@@ -80,7 +122,8 @@ const App: React.FC = () => {
       };
     } catch (error) {
       console.error("Failed to load state from localStorage, resetting state.", error);
-      alert("저장된 데이터를 불러오는 중 오류가 발생하여 시스템을 초기화합니다. 기존 데이터는 삭제됩니다.");
+      // Only alert if we are actually rendering the app, but hooks run before render.
+      // It's fine to clear storage here.
       localStorage.removeItem(APP_STATE_KEY);
       return getInitialState();
     }
@@ -151,27 +194,32 @@ const App: React.FC = () => {
     if (warningTimer.current) clearTimeout(warningTimer.current);
     
     warningTimer.current = window.setTimeout(() => {
-      setIsTimeoutModalOpen(true);
+      // Only show timeout if we have API key and are in the app
+      if (hasApiKey) {
+        setIsTimeoutModalOpen(true);
+      }
     }, INACTIVITY_TIMEOUT_MS - WARNING_TIMEOUT_MS);
-  }, []);
+  }, [hasApiKey]);
   
   useEffect(() => {
     const events = ['mousemove', 'keydown', 'click', 'scroll'];
     
     const handleActivity = () => {
-      if (!isTimeoutModalOpen) {
+      if (!isTimeoutModalOpen && hasApiKey) {
         resetActivityTimer();
       }
     };
 
     events.forEach(event => window.addEventListener(event, handleActivity));
-    resetActivityTimer();
+    if (hasApiKey) {
+        resetActivityTimer();
+    }
 
     return () => {
       events.forEach(event => window.removeEventListener(event, handleActivity));
       if (warningTimer.current) clearTimeout(warningTimer.current);
     };
-  }, [isTimeoutModalOpen, resetActivityTimer]);
+  }, [isTimeoutModalOpen, resetActivityTimer, hasApiKey]);
 
   const handleContinueSession = () => {
     setIsTimeoutModalOpen(false);
@@ -651,6 +699,37 @@ const App: React.FC = () => {
   };
   
   const hasEmptySlots = useMemo(() => slots.some(s => s.participantName === null), [slots]);
+
+  if (isCheckingKey) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+      </div>
+    );
+  }
+
+  if (!hasApiKey) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 p-4">
+        <div className="bg-white p-8 rounded-xl shadow-lg max-w-md w-full text-center">
+          <UsersIcon className="w-16 h-16 mx-auto text-indigo-600 mb-6" />
+          <h1 className="text-2xl font-bold text-gray-900 mb-2">체험 프로그램 관리 시스템</h1>
+          <p className="text-gray-600 mb-8">서비스를 이용하려면 Google Cloud 프로젝트의 API 키가 필요합니다.</p>
+          
+          <button 
+            onClick={handleApiKeySelect}
+            className="w-full bg-indigo-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-indigo-700 transition-colors shadow-md mb-4"
+          >
+            API 키 선택하기
+          </button>
+          
+          <p className="text-xs text-gray-500 mt-4">
+            API 키는 <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noreferrer" className="text-indigo-500 hover:underline">Google AI Studio</a>에서 발급받을 수 있습니다.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>
